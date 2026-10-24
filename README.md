@@ -660,3 +660,126 @@ State是全局数据；Node是动作；Edge控制流转；条件边实现ReAct�
 
 
 
+CrewAI （角色扮演式多智能体协作）
+定位：CrewAI 是面向多Agent分工协作的框架，主打角色+目标+任务的范式，和 LangGraph 状态机编排思路不一样。LangGraph 偏向灵活状态流转；CrewAI 天然适合模拟团队，给每个Agent分配岗位，分工配合完成复杂项目（写报告、市场调研、数据分析）。
+ 
+一、核心四大基础概念
+1. Agent（智能体，角色）
+每个Agent是一个独立角色，拥有人设、目标、背景、可用工具。
+ 
+-  role ：岗位角色（市场研究员、技术文档工程师、审核员）
+-  goal ：这个角色要达成的目标
+-  backstory ：背景人设，用来塑造风格、立场、能力边界（角色扮演核心）
+-  tools ：该角色能调用的工具，不同角色工具可以不一样
+-  llm ：可单独给每个Agent绑定不同大模型（研究员用强检索模型，写作用侧重创作模型）
+-  max_iter ：单个Agent最大迭代轮次，防止死循环
+ 
+重点：角色隔离！研究员只管收集信息，不负责润色；写手只管整理输出，不做检索。
+ 
+2. Task（任务）
+分配给Agent的具体工作单元，一个Crew由多个Task组成。
+ 
+-  description ：任务详细描述，输入要求
+-  expected_output ：明确输出格式、标准（非常关键，减少幻觉）
+-  agent ：绑定由谁来做
+-  dependencies ：依赖其他任务，等前置任务完成拿到结果再执行
+-  output_file ：直接把结果保存到文件（报告类场景高频）
+ 
+3. Crew（团队）
+把Agent和Task组装成一个团队，定义执行流程。
+ 
+python
+  
+crew = Crew(agents=[agent1, agent2], tasks=[task1, task2])
+crew.kickoff() # 启动运行
+ 
+ 
+调度模式两种：
+ 
+- Sequential（串行，默认）：按任务依赖顺序依次执行，A任务输出作为B任务输入
+- Hierarchical（分层主管模式）：自动生成一个主管Agent，负责分配任务、校验结果、协调冲突，适合任务多、依赖复杂的场景
+ 
+4. Process（执行流程）
+ 
+-  Process.sequential ：串行流水线（最常用、稳定）
+-  Process.hierarchical ：分层主管调度，主管拆解、派活、汇总、把关
+ 
+二、和普通单Agent、LangGraph的区别
+ 
+- 单Agent（ReAct）：一个大脑，自己规划、自己调用工具、自己干活
+- CrewAI：多个有独立人设的专家，各司其职，任务按流水线交付，天然适合文档产出类工作
+- LangGraph：底层状态机，自由度极高，循环、分支、并行、断点都能做；偏向控制流
+- CrewAI：上层应用框架，抽象是「团队分工」，控制流封装好了，上手快，但自定义流转灵活性弱于LangGraph
+ 
+一句话区分：
+你要精细控制每一步状态、分支、人工断点 → LangGraph
+你想快速搭一个专家团队，比如调研→写稿→审核→排版 → CrewAI
+ 
+三、典型工作链路（串行）
+ 
+1. Task1（研究员Agent）：检索资料、收集信息 → 输出调研草稿
+2. Task2（撰稿Agent）：读取Task1结果，整理成正式文稿
+3. Task3（审核Agent）：校验内容、检查事实、修正错误
+4. 全部完成，汇总最终交付物
+ 
+后一个Task自动接收前面Task的输出作为上下文，不需要手动维护State。
+ 
+四、高级特性
+ 
+1. Agent间回调/协作消息传递
+任务产出自动传递下游Agent；角色之间可以互相提问、核对信息。
+2. 缓存Cache
+工具调用、LLM推理结果缓存，减少重复token消耗
+3. 异步kickoff
+ kickoff_async() ，适合后台跑长时间报告任务
+4. 回调Callbacks
+监听每一步Agent思考、工具调用、任务完成事件，用于日志、监控
+5. 自定义工具共享/隔离
+工具可以全局共享，也可以只给指定角色，控制权限
+ 
+五、Prompt设计核心要点（CrewAI成败关键）
+ 
+1. backstory不要太长，聚焦岗位能力和约束；角色职责一定要划清，避免职责重叠抢活
+2. expected_output 必须写清楚格式：markdown、json、要点列表
+3. 明确禁止越权：研究员不允许直接下结论、写总结
+4. 依赖任务要写明：参考【上一个任务的输出】
+ 
+六、高频坑点
+1. 职责模糊：多个Agent做一样的事，内容重复、互相矛盾
+2. 缺少审核角色：产出内容事实错误没人校验，幻觉直接流出
+3. 任务依赖写反，串行顺序错乱
+4. 大任务粒度太大：一个Task同时要求检索+写稿+排版，失去分工意义
+5. hierarchical模式主管幻觉：主管错误合并结果、丢失关键信息
+6. 没有限制max_iter：某个Agent反复调用工具卡死
+ 
+七、适用 / 不适用场景
+✅ 适合：市场调研报告、竞品分析、技术文档撰写、论文辅助、方案策划、多步骤内容生产
+❌ 不适合：动态强交互、频繁分支跳转、实时问答、需要大量人工介入审批的Agent
+ 
+八、极简示例伪代码
+python
+  
+from crewai import Agent, Task, Crew, Process
+
+researcher = Agent(
+    role="信息研究员",
+    goal="收集准确资料",
+    backstory="你是专业调研人员，只负责检索和整理原始事实",
+    tools=[search_tool]
+)
+writer = Agent(
+    role="撰稿师",
+    goal="根据调研结果写成报告",
+    backstory="擅长结构化撰写，不编造事实"
+)
+
+task1 = Task(description="检索xxx信息", expected_output="要点清单", agent=researcher)
+task2 = Task(description="基于调研清单写报告", expected_output="markdown报告", agent=writer, dependencies=[task1])
+
+crew = Crew(agents=[researcher, writer], tasks=[task1, task2], process=Process.sequential)
+result = crew.kickoff()
+ 
+九、 
+CrewAI = 角色扮演多专家团队
+Agent是岗位角色，Task是分配的工作；支持串行/主管分层调度；适合内容生产类多Agent项目；灵活性低于LangGraph，开发速度更快。
+ 
