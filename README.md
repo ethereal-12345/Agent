@@ -451,3 +451,212 @@ ReAct = 思考→行动→观察循环；
 CoT只动脑，ReAct动脑还能动手拿外部信息；
 Plan-and-Solve先定全部路线再跑，ReAct走一步看一步。
  
+
+
+
+LangChain 生态
+说明：LangChain 核心定位：封装LLM、工具、检索、记忆，快速组装Agent与RAG流程；现在主流推荐 LangGraph 做Agent循环，LangChain 负责基础组件。
+一、三大核心模块 
+1. Chains 链
+ 
+Chain = 把多个组件按顺序串联，定义固定工作流，输入→经过多步→输出。
+ 
+- 本质：可调用单元  chain.run(input) 
+- 基础链
+-  LLMChain ：PromptTemplate + LLM，最基础，输入prompt给模型
+-  SequentialChain ：串行链式，A输出作为B输入（适合固定顺序任务）
+-  RouterChain ：路由链，根据用户问题分发到不同子链（问题分类分流）
+- RAG高频链
+-  RetrievalQA ：检索 + 组装上下文 + LLM回答（经典RAG链）
+-  ConversationalRetrievalChain ：带对话记忆的RAG，会先基于历史改写query再检索
+- 进阶： TransformChain  做数据清洗、格式转换； MapReduceChain  /  Refine  长文档摘要
+ 
+局限：传统Chain大多是静态流程，分支、循环、回退不好写 → 这就是LangGraph解决的问题
+ 
+2. Tools 工具
+ 
+Tool 给Chain/Agent提供外部能力，对应Function Calling。
+ 
+- 组成： name 、 description 、 args_schema （参数结构）、 func 执行函数
+- 内置常用工具：
+-  TavilySearch 联网搜索
+-  PythonREPL 代码沙盒执行
+-  RetrievalTool 知识库检索
+-  Calculator 数学计算
+- 自定义Tool： @tool 装饰器（最简单）、 StructuredTool 
+ 
+python
+  
+from langchain.tools import tool
+@tool
+def add(a:int,b:int)->int:
+    """两个数字相加"""
+    return a+b
+ 
+ 
+- Toolkit：一组相关工具打包（如SQLDatabaseToolkit，包含查表、查询、描述表）
+- 注意：Agent负责选工具；Chain一般预先固定用哪个工具
+ 
+3. Context Management 上下文管理
+ 
+负责控制进入LLM窗口的内容，解决上下文溢出、历史管理、压缩，包含三块：
+ 
+1. Chat Message History 对话历史
+-  ChatMessageHistory ：底层消息存储
+- 内存版 InMemoryChatMessageHistory （测试用，重启丢失）
+- 持久化：Redis / Postgres / SQLite 存储消息
+2. Memory 记忆封装（高层API）
+-  ConversationBufferMemory ：直接存全部原始消息，最简单，容易爆窗口
+-  ConversationSummaryMemory ：自动LLM摘要历史，节省token
+-  ConversationBufferWindowMemory ：滑动窗口，只保留最近N轮
+-  VectorStoreRetrieverMemory ：长时向量记忆，语义召回历史
+ 
+记忆是注入到prompt里，作为上下文给到Chain
+3. Context Compression 上下文压缩
+-  ContextualCompressionRetriever ：检索出来的chunk，经过压缩器过滤/精简
+- 压缩器：LLM压缩、Reranker过滤，删掉无关片段，减少token
+ 
+二、其他配套生态组件（顺带）
+ 
+- PromptTemplate / ChatPromptTemplate：提示模板，占位符填充
+- OutputParser：解析模型输出，Pydantic输出结构化数据
+- DocumentLoader：文档加载（PDF/Markdown/网页）
+- TextSplitter：文本切分
+- Embeddings：文本向量化封装
+- VectorStores：向量库统一抽象层（Chroma、Qdrant、Milvus一套接口）
+ 
+三、Chain vs Agent vs LangGraph 区分
+ 
+1. Chain：固定流程，预先写死步骤，不会自主选择工具、不会循环思考；适合RAG、摘要、翻译这类确定性流程
+2. Agent（LangChain旧Agent）：基于ReAct，模型动态选工具、动态决定下一步；早期实现，复杂分支难控制
+3. LangGraph：LangChain生态的图框架，新一代Agent标准，自定义节点、边、条件分支、循环、断点，实现ReAct、规划、记忆、重规划
+ 
+一句话：简单固定RAG用Chain；需要动态工具循环、复杂Agent，优先LangGraph
+ 
+四、工程踩坑清单
+1. Chain 耦合高：顺序写死，需求一变要大量改动，不要强行用Chain做复杂Agent
+2. Memory容易混淆：Memory是给Chain用的；LangGraph一般自己维护state状态，不再依赖老Memory组件
+3. 工具描述很关键：描述写模糊，Agent选错tool；参数schema尽量用Pydantic强约束
+4. 上下文管理不要只依赖Memory：长对话必须搭配检索记忆+摘要，不要无脑塞全部历史
+5. 老版本LangChain很多API废弃：现在推荐  langchain-core （基础抽象）、 langchain-community （第三方集成）、 langgraph 
+ 
+五、 
+- Chains：固定流水线，一步一步按预设跑
+- Tools：外部能力单元，给模型调用
+- Context Management：对话历史 + 记忆 + 上下文压缩，管好窗口里面装什么
+
+
+
+
+LangGraph （基于状态机的复杂Agent）
+ 
+定位：LangGraph 是 LangChain 生态里的状态图编排框架，专门解决传统 Chain 只能线性跑、旧版Agent难管控循环/分支/断点的痛点；用来落地 ReAct、任务规划、多Agent、重规划、记忆回退。
+核心思想：Agent = 图，节点是动作，边控制流转，State（状态）是全局唯一的信息载体。
+ 
+一、核心四大基础概念
+1. State 状态
+贯穿整个图的共享数据，所有节点读写都基于State，相当于Agent的全局上下文。
+- 一般用  TypedDict  或者  Pydantic  定义字段：messages、plan、tool_results、error、next_step 等
+- 内置消息列表  messages  最常用，保存用户消息、LLM输出、工具返回Observation
+- Reducer（归约函数）：重点！同一个字段多节点并发写入时，定义合并规则；messages默认reducer是追加，而不是覆盖。
+- 区分：State ≠ 短时记忆，State是图运行时状态；记忆模块可以把State内容持久化到向量库/数据库（长时记忆）
+2. Node 节点
+图里每一个执行单元，就是一个函数。输入State，返回State更新内容。
+常见节点：
+- llm_node：调用LLM，做思考、生成tool_call、生成计划
+- tool_node：解析tool_call，批量执行工具
+- planner_node：任务拆解规划
+- summarizer_node：上下文摘要、压缩
+- human_node：人工介入审批（Human-in-the-loop）
+ 
+节点是纯函数：输入state → 返回要更新的字段，不直接修改原始state
+3. Edge 边
+定义节点之间的流转关系，两种：
+- 普通边（Normal Edge）：固定流转，A执行完一定走到B
+- 条件边（Conditional Edge）：根据当前State判断走向，是实现ReAct循环的关键
+例：LLM输出是tool_call → 走到tool节点；否则 → 结束图，返回答案
+4. Graph（StateGraph）
+状态图本体：
+python
+  
+from langgraph.graph import StateGraph
+graph_builder = StateGraph(MyState)
+ 
+ 
+工作模式：从  START  入口节点开始，沿着边流转，走到  END  终止。
+ 
+二、ReAct 经典图结构（最常用模板）
+ 
+节点： llm  →  tools 
+条件边：llm执行完，判断输出是否包含工具调用
+ 
+- ✅ 有tool_call → 流向 tools 节点
+- ❌ 无tool_call → 流向 END，输出答案
+tools执行完成后，固定边回到 llm 节点，形成循环
+ 
+这就是标准 ReAct：Thought(llm) → Action(tools) → Observation(写入state) → Thought(llm)
+ 
+plaintext
+  
+START → LLM → {判断：是否调用工具}
+        ↓是        ↓否
+       TOOLS       END
+        ↓
+       LLM（循环）
+ 
+ 
+三、高级能力（LangGraph独有的，普通ReAct很难实现）
+1. Human-in-the-loop 人工介入
+断点机制：在指定节点设置  interrupt_before / interrupt_after ，图运行到这里暂停，等待人工输入、审批、修改计划后再继续执行。
+适用：高危工具、重要决策、需要人确认的流程。
+2. Checkpointer 持久化检查点
+搭配  MemorySaver  / Redis / Postgres 存储每一步的state快照。
+- 作用：暂停、恢复、回溯历史状态（回退到上一步、重做）
+- 适合：长耗时任务、异常中断恢复、多轮会话Agent
+ 
+区分：Checkpointer 存图运行快照，和业务长时向量记忆是两套东西
+3. 并行节点（Parallel Branch）
+同一个状态触发多个节点并行执行（同时调用多个检索、多个工具），全部完成后，reducer合并结果再往下走。
+适合多源并行检索、多模型打分。
+4. 子图 Subgraph
+把一套完整图封装成一个节点，实现嵌套：主图负责调度，子图负责一个子任务（比如子RAG、子规划Agent），实现模块化。
+ 
+四、和传统组件对比
+- Chain：固定线性流程，没有循环、没有分支，无状态
+- 老版 LangChain Agent：黑盒循环，流转不可见，很难插入自定义节点、断点、人工审核
+- LangGraph：显式状态+显式流转，每一步可控，日志、观测、回退都方便
+ 
+五、工程高频字段与模式
+标准State示例（TypedDict）
+ 
+python
+  
+from typing import Annotated, TypedDict, List
+from langgraph.graph.message import add_messages
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages] # add_messages就是消息追加reducer
+    plan: List[str]
+    tool_results: List[dict]
+ 
+-  add_messages ：LangGraph内置reducer，新消息追加到列表，不会覆盖历史对话
+ 
+六、常见坑
+1. 忘记reducer：直接覆盖messages，历史对话丢失
+2. 循环没有终止条件：死循环一直调用工具（必须设置最大迭代次数）
+3. State放太多冗余字段：状态膨胀，checkpoint存储开销大
+4. 混淆 Checkpointer 和业务记忆：Checkpointer 是运行快照；向量记忆是业务知识库/用户历史
+5. 节点里面写大量业务逻辑：节点尽量轻量化，逻辑抽离到外部函数
+6. 条件分支判断逻辑复杂，LLM输出不稳定：尽量让LLM输出结构化tool_call，由代码做路由判断，不要让LLM自己决定分支
+ 
+七、适用场景
+✅ ReAct工具循环Agent、带重规划的任务Agent、多Agent协作、需要人工审批流程、长任务断点续跑、复杂RAG流水线
+❌ 简单单步RAG、一次性Prompt调用（直接Chain就足够，没必要上LangGraph）
+ 
+八、 
+LangGraph = 状态机编排Agent
+State是全局数据；Node是动作；Edge控制流转；条件边实现ReAct循环；Checkpointer做快照暂停与回溯。
+ 
+
+
+
