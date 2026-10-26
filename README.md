@@ -870,10 +870,8 @@ Dify = 可视化RAG平台 + 低代码工作流；
  
 
 
-Dify 知识点笔记（开源RAG&AI应用平台）
- 
+Dify （开源知识库）
 定位：Dify 是开源低代码AI应用平台，核心是可视化RAG知识库 + 对话应用 + Workflow/Chatflow + Agent；不用从零写RAG链路，私有化部署，模型无关，适合快速落地企业知识库问答、业务Agent。
- 
 一、知识库核心链路（Dify RAG）
  
 完整流水线：数据源接入 → 文档解析 → 文本分块Chunk → Embedding向量化 → 存入向量库 → 检索 → 重排 → 注入Prompt → LLM生成
@@ -958,4 +956,142 @@ Dify 知识点笔记（开源RAG&AI应用平台）
 九、
 Dify = 可视化RAG平台 + 低代码工作流；
 知识库负责文档入库、向量化、混合检索重排；Chatflow/Workflow编排业务流程，内置Agent做工具调用；适合快速交付企业知识库问答。
+ 
+
+Hermes Agent 
+定位：函数调用驱动、轻量型Agent执行器，主打简洁、原生工具调用，不绑定复杂大框架
+ 
+1. 核心概念
+ 
+Hermes Agent 源自 Hermes 系列模型生态（Hermes LLM），配套的轻量Agent运行组件，核心依赖原生Function Calling，不自带复杂状态图、记忆管理、多Agent编排，区别于LangGraph、CrewAI。
+ 
+- 设计目标：极简，把「思考→选工具→调用工具→带回结果→继续推理」闭环跑通
+- 核心驱动：LLM输出标准function call，执行器负责解析、调用、回传
+ 
+2. 基础执行流程（单轮循环）
+ 
+1. 接收用户query + 工具schema列表
+2. LLM判断：直接回答 / 需要调用工具
+3. 输出结构化Function Call（工具名、参数）
+4. Hermes执行器校验参数、执行对应工具函数
+5. 获取工具返回结果，拼接进上下文
+6. 再次交给LLM，继续推理，直到不需要工具，输出最终答案
+ 
+3. 关键特性
+ 
+- ✅ 轻量：无 heavy 依赖，代码量小，适合嵌入服务
+- ✅ 强绑定标准Function Call：依赖模型输出规范JSON工具调用，不依赖prompt模拟工具调用
+- ✅ 可自定义工具：注册普通Python函数，自动转schema（类似OpenAI工具定义）
+- ✅ 基础循环控制：支持最大迭代轮次，防止无限调用工具
+- ✅ 可扩展记忆：本身不带内置记忆，短时/长时记忆需要外部自己接入（向量库、消息队列、数据库）
+- ✅ 无内置分支图：不像LangGraph支持自定义条件分支、多条并行路径，默认是线性ReAct循环
+ 
+4. 和同类框架对比
+ 
+- Hermes Agent：轻量执行器，只做 function call 调度，适合简单工具Agent、快速上线
+- LangGraph：状态机驱动，支持复杂分支、断点、人工介入，适合复杂业务Agent
+- CrewAI：多Agent、角色分工、任务委派，面向多智能体协作
+- Dify：低代码平台化，可视化编排，开箱RAG+Agent
+ 
+5. 适用场景
+ 
+✅ 简单工具查询Agent：查天气、查数据库、接口查询、计算器
+✅ 内部轻量服务嵌入，不想引入LangChain整套庞大生态
+✅ 基于Hermes系列模型快速搭建工具调用能力
+❌ 不适合：复杂分支逻辑、多Agent协作、长时记忆复杂管理、需要人工审批断点的流程
+ 
+6. 工程坑点
+ 
+1. 模型输出function call格式异常：需要加重试、JSON容错解析
+2. 循环爆炸：必须设置 max_steps 最大调用次数上限
+3. 工具调用权限隔离：执行器要做参数校验、沙箱，防止恶意调用
+4. 本身无RAG：检索能力需要自己额外接入Embedding+向量库
+5. 记忆裸奔：会话历史需要业务侧维护消息列表
+ 
+7. 
+Hermes Agent = 轻量Function Call调度器，线性ReAct循环，专注工具执行，复杂能力全部外部扩展
+
+
+
+ 了解框架LlamaIndex + AutoGen 
+定位：两大主流Agent/RAG框架，侧重不一样；LlamaIndex主打数据检索RAG，AutoGen主打多智能体对话协作
+一、LlamaIndex（原名 GPT Index）
+ 
+核心定位
+ 
+以数据、检索、索引为核心的框架，强项是RAG，解决“大模型怎么和私有数据打交道”。
+ 
+核心组件
+ 
+1. Connector/Reader：文档加载器（PDF、Markdown、网页、数据库等）
+2. Node：文档切片单元（相当于chunk，比原始文档更小的处理单位）
+3. Index 索引：核心存储抽象
+- VectorStoreIndex：向量检索（最常用）
+- SummaryIndex：摘要检索，全文概括
+- KeywordTableIndex：关键词检索
+- ListIndex：顺序遍历检索
+4. Retriever 检索器：从索引里召回相关节点，支持混合检索、重排
+5. QueryEngine 查询引擎：检索+LLM生成，基础问答入口
+6. ChatEngine：带会话记忆的对话问答
+7. Tools / Agent：把检索索引包装成工具，供Agent调用
+ 
+特点
+ 
+- 优势：RAG链路高度封装，大量内置加载器、检索策略、后处理（重排、上下文压缩），开箱做知识库
+- 弱项：原生多Agent编排能力弱，Agent是附加能力，不是主线
+- 适配场景：私有知识库、文档问答、企业RAG系统
+- 底层：可对接任意LLM、Embedding、向量库（OpenAI、DeepSeek、Milvus、Qdrant、Chroma等）
+ 
+简单流程
+ 
+文档加载 → 切分Node → 向量化 → 构建索引 → 检索召回 → 传入LLM生成答案
+ 
+二、AutoGen（微软）
+ 
+核心定位
+ 
+多Agent协作框架，主打多个智能体互相对话、分工协商完成任务，RAG属于外接能力。
+ 
+核心概念
+ 
+1. Agent 智能体
+- AssistantAgent：普通LLM助手，写代码、推理
+- UserProxyAgent：模拟人类，负责接收结果、执行代码、反馈
+- GroupChat / GroupChatManager：多Agent群聊管理器，负责选谁发言、流转对话
+2. 对话循环：Agent之间互相发消息，自动来回沟通，直到任务完成
+3. Code Executor 代码执行器：内置沙箱执行Python代码（数据分析、计算、脚本），是AutoGen王牌能力
+4. Function Calling：支持工具调用，可自定义函数
+5. 可接入记忆、RAG工具，但是框架本身不提供索引能力
+ 
+特点
+ 
+- 优势：多Agent对话编排成熟、代码执行能力强，适合需要分工、互相评审、写代码调试的复杂任务
+- 弱项：没有内置RAG索引链路，文档检索需要外接LlamaIndex / LangChain
+- 适配场景：代码助手、数据分析Agent、多角色协作任务、复杂问题多方讨论
+ 
+简单流程
+ 
+用户任务 → 多个Agent加入群聊 → 轮流对话、调用工具、运行代码 → 互相校验反馈 → 产出最终结果
+ 
+三、横向对比（LlamaIndex / AutoGen / LangGraph / CrewAI）
+ 
+- LlamaIndex：RAG优先，擅长文档检索问答，单Agent为主
+- AutoGen：多Agent对话优先，擅长群聊协作+代码执行
+- LangGraph：状态机优先，自定义DAG流程、断点、人工介入，灵活度最高
+- CrewAI：角色任务优先，按任务清单分配角色，偏向固定流水线多Agent
+ 
+四、工程坑点
+ 
+1. LlamaIndex
+- 版本改动大，新旧API不兼容
+- 默认切片策略简单，复杂文档要自己优化chunk、重叠度
+- Agent能力偏弱，复杂工具链建议搭配LangGraph
+2. AutoGen
+- 多Agent容易无限闲聊、循环对话，必须设置终止条件
+- 代码执行有安全风险，生产环境严格隔离沙箱
+- 没有内置知识库，RAG需要集成LlamaIndex
+ 
+五、
+- LlamaIndex：RAG专用框架，让大模型读懂私有文档
+- AutoGen：多Agent群聊框架，让多个AI互相分工对话、写代码
  
